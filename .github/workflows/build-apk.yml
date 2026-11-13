@@ -3,41 +3,57 @@ name: Build Android APK
 on:
   workflow_dispatch:
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
+permissions:
+  contents: read
 
-      - name: Set up Java
+jobs:
+  build-apk:
+    name: Release APK (arm64-v8a)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
-          java-version: '17'
+          distribution: temurin
+          java-version: "17"
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.38.5'
-          channel: 'stable'
+          channel: stable
+          flutter-version: "3.41.9"
+          cache: true
 
-      - name: Install Android NDK and CMake
+      - name: Generate temporary signing keystore
         run: |
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
-          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "ndk;26.1.10909125" "cmake;3.22.1"
+          mkdir -p "$RUNNER_TEMP/signing"
+          keytool -genkeypair -v \
+            -keystore "$RUNNER_TEMP/signing/release.jks" \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -alias mykey \
+            -storepass android -keypass android \
+            -dname "CN=RetroAmiga, OU=Dev, O=Home, L=City, S=State, C=PL"
 
-      - name: Build Debug APK
+      - name: Build release APK
         working-directory: app
-        run: |
-          flutter pub get
-          flutter build apk --debug
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/signing/release.jks
+          ANDROID_KEYSTORE_PASSWORD: android
+          ANDROID_KEY_ALIAS: mykey
+          ANDROID_KEY_PASSWORD: android
+          ORG_GRADLE_PROJECT_androidAbiFilters: arm64-v8a
+          GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g -Dorg.gradle.workers.max=2"
+        run: flutter build apk --release
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Retro-Amiga-APK
-          path: app/build/outputs/flutter-apk/app-debug.apk
-          
+          name: retro-amiga-release-apk
+          path: app/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 5
